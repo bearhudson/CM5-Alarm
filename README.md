@@ -11,10 +11,10 @@ The visualization is from Gemini and consists of "Fat-Tree Global Reduction / Ba
 STL files can be found at Thingiverse [here](https://www.thingiverse.com/thing:7400672).
 
 Features:
-- Automatic time sync
-- Automatic brightness adjustment
-- CM5 Emulator[ish]
-- PPM display per pixel sparkle
-- 8 hour forecast in the left color strip
-- 24HH:MM
-- ~$25USD in parts.
+* Automatic time sync
+* Automatic brightness adjustment
+* CM5 Emulator[ish]
+* PPM display per pixel sparkle
+* 8 hour forecast in the left color strip
+* 24HH:MM
+* ~$25USD in parts.
