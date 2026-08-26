@@ -1,5 +1,7 @@
 ### CM-5 Thinking Machine Alarm Clock / Weather Notifier
 
+<p align='center'><img src="img.png" /></p>
+
 I had an idea to use two MAX7219s as a Home Assistant display panel but I thought the LEDs were RGB LEDs not single color, I decided to make two into a CM-5 emulator / alarm clock. My lizard brain finds relaxation in lights and I find this very soothing to look at. 
 
 There's a number of constants you'll need to enter before flashing including wi-fi credentials and an Openweather API key.
