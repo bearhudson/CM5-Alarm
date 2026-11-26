@@ -1,15 +1,22 @@
 /*
   ================================================================================
-   CM-5 "Thinking Machine" Automaton & Smart Clock Display
+   CM-5 "Thinking Machine" Automaton & Smart Clock Display (Horizontal Edition)
   ================================================================================
-   Screen 1 (Modules 0-3): Rule 90 cellular automaton (CM-5 replica) with 
-              independent row shifts & PM2.5-driven sparkles.
-   Screen 2 (Modules 4-7): Vertical 4-digit 24-hour clock.
-   Matrix Brightness: 
-     - Night (sundown to sunrise): Intensity 0 (ultra-dim).
+   Description:
+   Drives two horizontal 32x8 LED matrix banks using 8x MAX7219 modules (4 per bank),
+   plus an accompanying WS2812B NeoPixel strip for ambient weather/AQI lighting.
+
+   Screen 1 (Modules 0-3): 32x8 horizontal telemetry-driven load simulation
+              sliding left-to-right, seeded by humidity & clouds, paced by wind
+              speed, stirred by barometric pressure/precipitation, with AQI/PM2.5
+              sparkles and a hybrid PM2.5 + AQI load meter on column x = 0.
+   Screen 2 (Modules 4-7): Horizontal 4-digit 24-hour clock (HHMM) rendered using
+              Japanese kanji numerals (〇, 一, 二, 三, 四, 五, 六, 七, 八, 九).
+   Matrix Brightness:
+     - Night (sundown to sunrise): Intensity 0.
      - First hour after sunrise: Smoothly ramps from 0 to 5.
      - Daytime: Intensity 5.
-   NeoPixels: 
+   NeoPixels:
      - Displays 8-hour weather forecast palette.
      - Red (AQI 4) & Purple (AQI 5) emergency air quality warnings.
      - Real-time Day/Night ambient dimming.
@@ -34,13 +41,13 @@ const char* WIFI_PASS       = "CHANGEME";
 const char* OPENWEATHER_KEY = "CHANGEME";
 
 // POSIX Timezone string (US Eastern Time with automatic DST adjustments)
-// ALSO UNCOMMENT THESE AND SET APPROPRIATELY
-// const char* TZ_INFO = "EST5EDT,M3.2.0,M11.1.0";
-// const char* CITY_NAME       = "Boston,US"; 
-// const char* LATITUDE        = "42.3601";  
-// const char* LONGITUDE       = "-71.0589"; 
+const char* TZ_INFO         = "EST5EDT,M3.2.0,M11.1.0";
+const char* CITY_NAME       = "Boston,US";
+const char* LATITUDE        = "42.3601";
+const char* LONGITUDE       = "-71.0589";
 
 // Hardware Orientation configuration
+// Set to true if Screen 2 (modules 4-7) is physically mounted upside-down (180 deg).
 const bool REVERSE_PANEL_2  = true;
 
 // ===============================================================================
@@ -48,15 +55,18 @@ const bool REVERSE_PANEL_2  = true;
 // ===============================================================================
 const int PIN_DATA_IN  = D4; // MAX7219 DIN
 const int PIN_CLK      = D2; // MAX7219 CLK
-const int PIN_CS       = D3; // MAX7219 CS 
+const int PIN_CS       = D3; // MAX7219 CS
 const int PIN_NEOPIXEL = D6; // NeoPixel DIN
 
 #define NUM_MAX_DEVICES 8
-#define NUM_PIXELS      18
+#define NUM_PIXELS      8
 
-#define PANEL_WIDTH     8    
-#define PANEL_HEIGHT    32   
+// Horizontal 32x8 dimensions for Screen 1 load simulation
+#define PANEL_WIDTH     32
+#define PANEL_HEIGHT    8
 
+#define SCREEN1_DEVICE_OFFSET 0
+#define SCREEN1_NUM_DEVICES   4
 #define SCREEN2_DEVICE_OFFSET 4
 #define SCREEN2_NUM_DEVICES   4
 
@@ -64,37 +74,37 @@ LedControl lc = LedControl(PIN_DATA_IN, PIN_CLK, PIN_CS, NUM_MAX_DEVICES);
 Adafruit_NeoPixel strip(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 
 // ===============================================================================
-// --- Font Definitions ---
+// --- Horizontal Font Definitions (Kanji 0-9 + SYNC Status Glyphs in 8x8) ---
 // ===============================================================================
-const uint8_t FONT_BIG_ROTATED[14][8] PROGMEM = {
-  // '0'
-  {0b00000000, 0b00111110, 0b01010001, 0b01001001, 0b01000101, 0b00111110, 0b00000000, 0b00000000},
-  // '1'
-  {0b00000000, 0b00000000, 0b01000001, 0b01111111, 0b01000000, 0b00000000, 0b00000000, 0b00000000},
-  // '2'
-  {0b00000000, 0b01100010, 0b01010001, 0b01001001, 0b01000101, 0b01000010, 0b00000000, 0b00000000},
-  // '3'
-  {0b00000000, 0b00100010, 0b01000001, 0b01001001, 0b01001001, 0b00110110, 0b00000000, 0b00000000},
-  // '4'
-  {0b00000000, 0b00011000, 0b00010100, 0b00010010, 0b01111111, 0b00010000, 0b00000000, 0b00000000},
-  // '5'
-  {0b00000000, 0b00100111, 0b01000101, 0b01000101, 0b01000101, 0b00111001, 0b00000000, 0b00000000},
-  // '6'
-  {0b00000000, 0b00111110, 0b01001001, 0b01001001, 0b01001001, 0b00110000, 0b00000000, 0b00000000},
-  // '7'
-  {0b00000000, 0b00000001, 0b01110001, 0b00001001, 0b00000101, 0b00000011, 0b00000000, 0b00000000},
-  // '8'
-  {0b00000000, 0b00110110, 0b01001001, 0b01001001, 0b01001001, 0b00110110, 0b00000000, 0b00000000},
-  // '9'
-  {0b00000000, 0b00001100, 0b01010011, 0b01010011, 0b01010011, 0b00111110, 0b00000000, 0b00000000},
-  // 'S'
-  {0b00000000, 0b00100110, 0b01001001, 0b01001001, 0b01001001, 0b00110010, 0b00000000, 0b00000000},
-  // 'Y'
-  {0b00000000, 0b00000011, 0b00000100, 0b01111111, 0b00000100, 0b00000011, 0b00000000, 0b00000000},
-  // 'N'
-  {0b00000000, 0b01111111, 0b00000100, 0b00001000, 0b00010000, 0b01111111, 0b00000000, 0b00000000},
-  // 'C'
-  {0b00000000, 0b00111110, 0b01000001, 0b01000001, 0b01000001, 0b00100010, 0b00000000, 0b00000000},
+const uint8_t FONT_HORIZ_KANJI[14][8] PROGMEM = {
+  // '0' -> 〇
+  {0b00111100, 0b01000010, 0b01000010, 0b01000010, 0b01000010, 0b01000010, 0b01000010, 0b00111100},
+  // '1' -> 一
+  {0b00000000, 0b00000000, 0b00000000, 0b11111111, 0b01111110, 0b00000000, 0b00000000, 0b00000000},
+  // '2' -> 二
+  {0b00000000, 0b01111110, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b11111111, 0b00000000},
+  // '3' -> 三
+  {0b01111110, 0b00000000, 0b00000000, 0b00111100, 0b00000000, 0b00000000, 0b00000000, 0b11111111},
+  // '4' -> 四
+  {0b11111111, 0b10101001, 0b10101001, 0b10101001, 0b11101001, 0b10000101, 0b10000011, 0b11111111},
+  // '5' -> 五
+  {0b11111111, 0b00100000, 0b00100000, 0b11111111, 0b00100000, 0b01111110, 0b00100010, 0b11111111},
+  // '6' -> 六
+  {0b00010000, 0b00010000, 0b11111111, 0b00000000, 0b00100100, 0b01000010, 0b10000001, 0b10000001},
+  // '7' -> 七
+  {0b00100000, 0b00100001, 0b11111111, 0b10100000, 0b00100000, 0b00100000, 0b00100001, 0b00011110},
+  // '8' -> 八
+  {0b00100000, 0b00001000, 0b00100100, 0b00100100, 0b00100100, 0b01000010, 0b10000001, 0b10000001},
+  // '9' -> 九
+  {0b00000100, 0b00000100, 0b11111111, 0b00100100, 0b00100100, 0b00100100, 0b01000101, 0b10000110},
+  // 'S' (index 10)
+  {0b01111110, 0b11000000, 0b11000000, 0b01111110, 0b00000011, 0b00000011, 0b00000011, 0b11111110},
+  // 'Y' (index 11)
+  {0b11000011, 0b01100110, 0b00111100, 0b00011000, 0b00011000, 0b00011000, 0b00011000, 0b00011000},
+  // 'N' (index 12)
+  {0b11000011, 0b11100011, 0b10110011, 0b10011011, 0b10001111, 0b10000111, 0b10000011, 0b11000011},
+  // 'C' (index 13)
+  {0b01111110, 0b11000011, 0b11000000, 0b11000000, 0b11000000, 0b11000000, 0b11000011, 0b01111110},
 };
 
 int8_t glyphIndexFor(char c) {
@@ -112,12 +122,15 @@ int8_t glyphIndexFor(char c) {
 // --- Application State & Buffers ---
 // ===============================================================================
 
-uint8_t cm5Rows[PANEL_HEIGHT];
-bool rowDirections[PANEL_HEIGHT];   
-uint8_t rowLifetimes[PANEL_HEIGHT];  
-uint8_t sparkleMask[PANEL_HEIGHT];
-uint8_t currentGen = 0;
+// Screen 1: Horizontal 32x8 Load Simulation Buffers (bit 31 = left x=0, bit 0 = right x=31)
+uint32_t loadRows[PANEL_HEIGHT];
+uint32_t sparkleMask[PANEL_HEIGHT];
+bool rowDirections[PANEL_HEIGHT];
+uint8_t rowLifetimes[PANEL_HEIGHT];
+uint8_t currentGen = 0; // 8-bit vertical slice entering at x=0 (left edge)
+bool alertPipBlinkState = false;
 
+// Screen 2: Clock Buffer
 char timeChars[SCREEN2_NUM_DEVICES] = {'S', 'Y', 'N', 'C'};
 
 // Time Synchronization Anchor
@@ -125,15 +138,19 @@ time_t lastKnownValidEpoch        = 0;
 unsigned long lastSyncLocalMillis = 0;
 bool isTimeEverSynced             = false;
 
-// Environmental Data
+// Compact Environmental & Telemetry State
 int forecast8HrWeatherId          = 800;
-float forecast8HrTempC            = 20.0;
-int currentAQI                    = 1;   
-float currentPM25                 = 0.0; 
+float forecast8HrTempC            = 20.0f;
+uint8_t currentHumidity           = 50;     // % (0..100)
+uint16_t currentPressure          = 1013;   // hPa
+float currentWindSpeed            = 2.0f;   // m/s
+uint8_t currentClouds             = 20;     // % (0..100)
+int currentAQI                    = 1;
+float currentPM25                 = 0.0f;
 unsigned long sunriseEpoch        = 0;
 unsigned long sunsetEpoch         = 0;
 bool isDaytime                    = true;
-uint8_t currentMatrixIntensity    = 0; // Starts at 0 (ultra-dim)
+uint8_t currentMatrixIntensity    = 0;
 
 // NeoPixel States
 float pixelSpeeds[NUM_PIXELS];
@@ -149,15 +166,18 @@ unsigned long lastTimeUpdate      = 0;
 unsigned long lastNtpRetry        = 0;
 
 // Refresh Rates (ms)
-uint16_t tickInterval             = 1000; 
-uint16_t sparkleInterval          = 350;  
-uint16_t twinkleInterval          = 30;   
+uint16_t tickInterval             = 1000;
+uint16_t sparkleInterval          = 350;
+uint16_t twinkleInterval          = 30;
 
 void reseed();
 uint8_t nextGeneration(uint8_t gen);
-void tickAutomaton();
+uint16_t computeWindTickInterval();
+bool hasAtmosphericTurbulence();
+void tickLoadSimulation();
 void rollSparkle();
-void renderScreen1_CM5();
+uint8_t computeHybridMeterHeight();
+void renderScreen1_Load();
 void drawBigCharToDevice(int8_t glyphIdx, int logicalSlot);
 void renderScreen2_Clock();
 time_t updateClockData();
@@ -171,21 +191,22 @@ uint32_t blendHSV(uint16_t h1, uint8_t s1, uint8_t v1, uint16_t h2, uint8_t s2, 
 // ===============================================================================
 void setup() {
   Serial.begin(115200);
-  delay(200); 
+  delay(200);
 
-  Serial.println(F("\n\n--- CM-5 Display Booting ---"));
+  Serial.println(F("\n\n--- CM-5 Telemetry Load & Smart Clock Booting ---"));
 
   randomSeed(analogRead(A0));
 
   for (int dev = 0; dev < NUM_MAX_DEVICES; dev++) {
     lc.shutdown(dev, false);
-    lc.setIntensity(dev, 0); // Initialize at dimmest level
+    lc.setIntensity(dev, 0);
     lc.clearDisplay(dev);
   }
 
   strip.begin();
   strip.show();
 
+  // Half-speed twinkle frequencies
   for (int i = 0; i < NUM_PIXELS; i++) {
     pixelSpeeds[i]       = 0.40 + (float)random(15, 45) / 100.0;
     pixelOffsets[i]      = (float)random(0, 628) / 100.0;
@@ -193,11 +214,14 @@ void setup() {
   }
 
   for (int r = 0; r < PANEL_HEIGHT; r++) {
+    loadRows[r]      = 0;
+    sparkleMask[r]   = 0;
     rowDirections[r] = (random(0, 2) == 1);
     rowLifetimes[r]  = random(4, 12);
   }
 
   reseed();
+  renderScreen1_Load();
   renderScreen2_Clock();
 
   setenv("TZ", TZ_INFO, 1);
@@ -205,7 +229,7 @@ void setup() {
 
   Serial.print(F("[WIFI] Connecting to "));
   Serial.print(WIFI_SSID);
-  
+
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
@@ -257,17 +281,20 @@ void loop() {
     renderScreen2_Clock();
   }
 
-  // 4. Step Rule 90 Automaton Logic
+  // 4. Step Horizontal Telemetry-Driven Load Simulation (Left-to-Right)
+  tickInterval = computeWindTickInterval();
   if (now - lastTick >= tickInterval) {
     lastTick = now;
-    tickAutomaton();
+    alertPipBlinkState = !alertPipBlinkState;
+    tickLoadSimulation();
+    renderScreen1_Load();
   }
 
   // 5. Update Screen 1 Sparkles & Render
   if (now - lastSparkle >= sparkleInterval) {
     lastSparkle = now;
     rollSparkle();
-    renderScreen1_CM5();
+    renderScreen1_Load();
   }
 
   // 6. Asynchronous NeoPixel Twinkle
@@ -288,8 +315,7 @@ time_t updateClockData() {
     isTimeEverSynced    = true;
     lastKnownValidEpoch = sysNow;
     lastSyncLocalMillis = currentMillis;
-  }
-  else if (isTimeEverSynced && lastKnownValidEpoch > 0) {
+  } else if (isTimeEverSynced && lastKnownValidEpoch > 0) {
     sysNow = lastKnownValidEpoch + ((currentMillis - lastSyncLocalMillis) / 1000);
   }
 
@@ -310,8 +336,8 @@ time_t updateClockData() {
 
   struct tm* ti = localtime(&sysNow);
   char hh[4], mm[4];
-  strftime(hh, sizeof(hh), "%H", ti); 
-  strftime(mm, sizeof(mm), "%M", ti); 
+  strftime(hh, sizeof(hh), "%H", ti);
+  strftime(mm, sizeof(mm), "%M", ti);
 
   timeChars[0] = hh[0];
   timeChars[1] = hh[1];
@@ -325,21 +351,18 @@ time_t updateClockData() {
 // --- Dynamic Matrix Brightness Ramp (0 Night -> 5 Day) ---
 // ===============================================================================
 void updateMatrixBrightness(time_t now) {
-  uint8_t targetIntensity = 0; // Default to ultra-dim night intensity
+  uint8_t targetIntensity = 0;
 
   if (sunriseEpoch > 0 && sunsetEpoch > 0) {
     if (now >= sunriseEpoch && now < sunsetEpoch) {
       unsigned long secondsSinceSunrise = now - sunriseEpoch;
 
       if (secondsSinceSunrise < 3600) {
-        // First hour after sunrise: Scale smoothly from 0 to 5
         targetIntensity = (uint8_t)((secondsSinceSunrise * 5) / 3600);
       } else {
-        // Full daytime
         targetIntensity = 5;
       }
     } else {
-      // Sundown to sunup
       targetIntensity = 0;
     }
   } else {
@@ -360,73 +383,112 @@ void updateMatrixBrightness(time_t now) {
 }
 
 // ===============================================================================
-// --- Screen 1: CM-5 Cellular Automaton & Multi-Direction Shifts ---
+// --- Screen 1: Telemetry-Driven Left-to-Right Load Simulation ---
 // ===============================================================================
+
+// Map wind speed (0..15 m/s) to tick cadence (1500 ms calm down to 350 ms brisk)
+uint16_t computeWindTickInterval() {
+  float w = currentWindSpeed;
+  if (w < 0.0f)  w = 0.0f;
+  if (w > 15.0f) w = 15.0f;
+  float ratio = w / 15.0f;
+  return (uint16_t)(1500.0f - (ratio * 1150.0f));
+}
+
+// Low barometric pressure or incoming storm/rain/snow increases per-row turbulence
+bool hasAtmosphericTurbulence() {
+  bool lowPressure = (currentPressure > 0 && currentPressure < 1005);
+  bool precipAhead = (forecast8HrWeatherId >= 200 && forecast8HrWeatherId < 700);
+  return lowPressure || precipAhead;
+}
+
+// Seed the 8-bit intake slice using humidity and cloud cover
 void reseed() {
   currentGen = 0;
-  if (random(0, 3) == 0) {
-    for (uint8_t i = 0; i < 2; i++) currentGen |= (1 << random(0, PANEL_WIDTH));
-  } else {
-    currentGen = (1 << (PANEL_WIDTH / 2));
+  uint8_t moistureScore = (uint8_t)(((uint16_t)currentHumidity + (uint16_t)currentClouds) / 2);
+
+  uint8_t activeBits = 1;
+  if (moistureScore >= 80) {
+    activeBits = 4;
+  } else if (moistureScore >= 55) {
+    activeBits = 3;
+  } else if (moistureScore >= 25) {
+    activeBits = 2;
+  }
+
+  for (uint8_t i = 0; i < activeBits; i++) {
+    currentGen |= (1 << random(0, PANEL_HEIGHT));
+  }
+  if (currentGen == 0) {
+    currentGen = (1 << (PANEL_HEIGHT / 2));
   }
 }
 
+// Rule 90 over the 8-bit vertical slice entering at the left edge (x = 0)
 uint8_t nextGeneration(uint8_t gen) {
   uint8_t next = 0;
-  for (int i = 0; i < PANEL_WIDTH; i++) {
-    bool left  = (i > 0)               ? bitRead(gen, i - 1) : 0;
-    bool right = (i < PANEL_WIDTH - 1) ? bitRead(gen, i + 1) : 0;
-    if (left ^ right) next |= (1 << i);
+  for (int y = 0; y < PANEL_HEIGHT; y++) {
+    bool up   = (y > 0)                  ? bitRead(gen, y - 1) : 0;
+    bool down = (y < PANEL_HEIGHT - 1) ? bitRead(gen, y + 1) : 0;
+    if (up ^ down) next |= (1 << y);
   }
   return next;
 }
 
-void tickAutomaton() {
-  for (int r = PANEL_HEIGHT - 1; r > 0; r--) {
-    cm5Rows[r] = cm5Rows[r - 1];
-  }
-  cm5Rows[0] = currentGen;
-  currentGen = nextGeneration(currentGen);
+void tickLoadSimulation() {
+  bool turbulent = hasAtmosphericTurbulence();
+  uint8_t driftThreshold = turbulent ? 9 : 6; // 90% in turbulence, 60% normally
 
-  for (int r = 0; r < PANEL_HEIGHT; r++) {
-    uint8_t val = cm5Rows[r];
-    if (val != 0 && random(0, 10) < 6) {
-      if (rowDirections[r]) {
-        cm5Rows[r] = (val << 1) | (val >> 7);
+  // 1. Slide all 8 horizontal rows from left (bit 31 / x=0) to right (bit 0 / x=31)
+  for (int y = 0; y < PANEL_HEIGHT; y++) {
+    uint32_t incomingLeftBit = bitRead(currentGen, y) ? (1UL << 31) : 0UL;
+    uint32_t val = (loadRows[y] >> 1) | incomingLeftBit;
+
+    // 2. Independent per-row horizontal load drift along the 32-bit lane
+    if (val != 0 && random(0, 10) < driftThreshold) {
+      if (rowDirections[y]) {
+        val = (val >> 1) | (val << 31);
       } else {
-        cm5Rows[r] = (val >> 1) | (val << 7);
+        val = (val << 1) | (val >> 31);
       }
 
-      if (rowLifetimes[r] > 0) {
-        rowLifetimes[r]--;
+      if (rowLifetimes[y] > 0) {
+        rowLifetimes[y]--;
       } else {
-        rowDirections[r] = (random(0, 2) == 1);
-        rowLifetimes[r]  = random(4, 12);
+        rowDirections[y] = (random(0, 2) == 1);
+        rowLifetimes[y]  = turbulent ? random(2, 6) : random(4, 12);
       }
     }
+
+    loadRows[y] = val;
   }
+
+  currentGen = nextGeneration(currentGen);
 
   static uint8_t genCount = 0;
   genCount++;
-  if (currentGen == 0 || genCount > 40) {
+  uint8_t maxGenSpan = turbulent ? 24 : 40;
+  if (currentGen == 0 || genCount > maxGenSpan) {
     reseed();
     genCount = 0;
   }
 }
 
 void rollSparkle() {
-  for (uint8_t r = 0; r < PANEL_HEIGHT; r++) sparkleMask[r] = 0;
-  
+  for (int y = 0; y < PANEL_HEIGHT; y++) {
+    sparkleMask[y] = 0;
+  }
+
   uint8_t minSparkles = 0;
   uint8_t maxSparkles = 2;
 
-  if (currentAQI >= 5 || currentPM25 >= 150.0) {
+  if (currentAQI >= 5 || currentPM25 >= 150.0f) {
     minSparkles = 70;
     maxSparkles = 110;
-  } else if (currentAQI == 4 || currentPM25 >= 75.0) {
+  } else if (currentAQI == 4 || currentPM25 >= 75.0f) {
     minSparkles = 35;
     maxSparkles = 65;
-  } else if (currentAQI == 3 || currentPM25 >= 35.0) {
+  } else if (currentAQI == 3 || currentPM25 >= 35.0f) {
     minSparkles = 3;
     maxSparkles = 6;
   } else {
@@ -436,30 +498,81 @@ void rollSparkle() {
 
   uint8_t sparkleCount = random(minSparkles, maxSparkles + 1);
   for (uint8_t n = 0; n < sparkleCount; n++) {
-    uint8_t x = random(0, PANEL_WIDTH);
-    uint8_t y = random(0, PANEL_HEIGHT);
-    sparkleMask[y] |= (1 << x);
+    uint8_t x = random(1, PANEL_WIDTH);  // Keep x=0 dedicated to the load meter
+    uint8_t y = random(0, PANEL_HEIGHT); // 0..7 top to bottom
+    sparkleMask[y] |= (1UL << (31 - x));
   }
 }
 
-void renderScreen1_CM5() {
+// Hybrid Meter: Continuous PM2.5 scaling (0..120 ug/m3 -> 0..7 bars) + AQI tier floor
+uint8_t computeHybridMeterHeight() {
+  float clampedPM = currentPM25;
+  if (clampedPM < 0.0f)   clampedPM = 0.0f;
+  if (clampedPM > 120.0f) clampedPM = 120.0f;
+
+  uint8_t pmBars = (uint8_t)((clampedPM / 120.0f) * 7.0f + 0.5f);
+  if (currentPM25 > 1.0f && pmBars == 0) {
+    pmBars = 1;
+  }
+
+  uint8_t aqiFloor = 0;
+  if (currentAQI >= 5) {
+    aqiFloor = 8;
+  } else if (currentAQI == 4) {
+    aqiFloor = 6;
+  } else if (currentAQI == 3) {
+    aqiFloor = 3;
+  } else if (currentAQI == 2) {
+    aqiFloor = 1;
+  }
+
+  uint8_t bars = (pmBars > aqiFloor) ? pmBars : aqiFloor;
+  if (bars > PANEL_HEIGHT) bars = PANEL_HEIGHT;
+  return bars;
+}
+
+void renderScreen1_Load() {
+  const uint32_t METER_BIT = (1UL << 31); // Column x = 0 (leftmost column of Module 0)
+  uint8_t meterBars = computeHybridMeterHeight();
+  bool severeAlert = (currentAQI >= 4);
+
   for (int y = 0; y < PANEL_HEIGHT; y++) {
-    uint8_t rowVal = cm5Rows[y] ^ sparkleMask[y];
-    int dev = y / 8;
-    int localRow = y % 8;
-    lc.setRow(dev, localRow, rowVal);
+    // Combine sliding simulation and sparkles on columns x = 1..31, clearing x = 0
+    uint32_t combined = (loadRows[y] ^ sparkleMask[y]) & ~METER_BIT;
+
+    // Bottom-up bar fills rows y = (8 - meterBars) .. 7
+    bool barLit = (meterBars > 0) && (y >= (PANEL_HEIGHT - meterBars));
+
+    // In severe AQI (4 or 5), pulse the top-most pip (y = 0) on the tick
+    if (severeAlert && y == 0) {
+      barLit = alertPipBlinkState;
+    }
+
+    if (barLit) {
+      combined |= METER_BIT;
+    }
+
+    // Split 32-bit horizontal row across 4 side-by-side modules (left = dev 0, right = dev 3)
+    for (int m = 0; m < SCREEN1_NUM_DEVICES; m++) {
+      int dev = SCREEN1_DEVICE_OFFSET + m;
+      int shiftAmount = (3 - m) * 8;
+      uint8_t byteVal = (uint8_t)((combined >> shiftAmount) & 0xFF);
+      lc.setRow(dev, y, byteVal);
+    }
   }
 }
 
 // ===============================================================================
-// --- Screen 2: Dedicated Clock ---
+// --- Screen 2: Horizontal 4-Digit Kanji Clock ---
 // ===============================================================================
 void drawBigCharToDevice(int8_t glyphIdx, int logicalSlot) {
   int dev = SCREEN2_DEVICE_OFFSET + (REVERSE_PANEL_2 ? (SCREEN2_NUM_DEVICES - 1 - logicalSlot) : logicalSlot);
 
   for (int r = 0; r < 8; r++) {
     uint8_t rowVal = 0x00;
-    if (glyphIdx >= 0) rowVal = pgm_read_byte(&(FONT_BIG_ROTATED[glyphIdx][r]));
+    if (glyphIdx >= 0) {
+      rowVal = pgm_read_byte(&(FONT_HORIZ_KANJI[glyphIdx][r]));
+    }
 
     int outRow = r;
     if (REVERSE_PANEL_2) {
@@ -500,14 +613,14 @@ void updateTwinkle() {
   float sec = millis() / 1000.0;
 
   float minBright = isDaytime ? 0.08 : 0.003;
-  float maxBright = isDaytime ? 1.00 : 0.040; 
+  float maxBright = isDaytime ? 1.00 : 0.040;
 
   for (int i = 0; i < NUM_PIXELS; i++) {
     float rawWave = (sin(sec * pixelSpeeds[i] + pixelOffsets[i]) + 1.0) / 2.0;
-    float sharpTwinkle = rawWave * rawWave * rawWave; 
+    float sharpTwinkle = rawWave * rawWave * rawWave;
     float brightness = minBright + (sharpTwinkle * (maxBright - minBright));
 
-    float phase = (sin(sec * 0.02 + pixelPhaseOffsets[i]) + 1.0) / 2.0; 
+    float phase = (sin(sec * 0.02 + pixelPhaseOffsets[i]) + 1.0) / 2.0;
 
     uint32_t baseColor = 0;
 
@@ -517,41 +630,34 @@ void updateTwinkle() {
       baseColor = strip.ColorHSV(0, 255, 255);     // Red
     } else if (currentAQI == 3) {
       baseColor = strip.ColorHSV(4500, 255, 255);  // Orange
-    }
-    else if (!isDaytime) {
+    } else if (!isDaytime) {
       baseColor = blendHSV(43500, 255, 160, 48500, 240, 100, phase);
-    }
-    else if (forecast8HrWeatherId >= 200 && forecast8HrWeatherId < 300) {
+    } else if (forecast8HrWeatherId >= 200 && forecast8HrWeatherId < 300) {
       baseColor = blendHSV(39000, 255, 255, 54000, 255, 255, phase);
 
       if (random(0, 400) == 77) {
-        baseColor = strip.ColorHSV(0, 0, 255); 
+        baseColor = strip.ColorHSV(0, 0, 255);
         brightness = 1.0;
       }
-    }
-    else if ((forecast8HrWeatherId >= 600 && forecast8HrWeatherId < 700) || 
-             ((forecast8HrWeatherId >= 300 && forecast8HrWeatherId < 600) && forecast8HrTempC <= 1.0)) {
+    } else if ((forecast8HrWeatherId >= 600 && forecast8HrWeatherId < 700) ||
+               ((forecast8HrWeatherId >= 300 && forecast8HrWeatherId < 600) && forecast8HrTempC <= 1.0f)) {
       baseColor = blendHSV(33500, 230, 255, 37500, 70, 230, phase);
-    }
-    else if (forecast8HrWeatherId >= 300 && forecast8HrWeatherId < 600) {
-      if (phase < 0.5) {
-        baseColor = blendHSV(34500, 255, 255, 43500, 255, 255, phase * 2.0);
+    } else if (forecast8HrWeatherId >= 300 && forecast8HrWeatherId < 600) {
+      if (phase < 0.5f) {
+        baseColor = blendHSV(34500, 255, 255, 43500, 255, 255, phase * 2.0f);
       } else {
-        baseColor = blendHSV(43500, 255, 255, 50500, 255, 255, (phase - 0.5) * 2.0);
+        baseColor = blendHSV(43500, 255, 255, 50500, 255, 255, (phase - 0.5f) * 2.0f);
       }
-    }
-    else if ((forecast8HrWeatherId >= 700 && forecast8HrWeatherId < 800) || forecast8HrWeatherId >= 803) {
+    } else if ((forecast8HrWeatherId >= 700 && forecast8HrWeatherId < 800) || forecast8HrWeatherId >= 803) {
       baseColor = blendHSV(38000, 25, 255, 36000, 70, 140, phase);
-    }
-    else if (forecast8HrWeatherId == 802) {
-      if (phase < 0.5) {
-        baseColor = blendHSV(3200, 255, 255, 9500, 255, 255, phase * 2.0);
+    } else if (forecast8HrWeatherId == 802) {
+      if (phase < 0.5f) {
+        baseColor = blendHSV(3200, 255, 255, 9500, 255, 255, phase * 2.0f);
       } else {
-        baseColor = blendHSV(9500, 255, 255, 8000, 35, 255, (phase - 0.5) * 2.0);
+        baseColor = blendHSV(9500, 255, 255, 8000, 35, 255, (phase - 0.5f) * 2.0f);
       }
-    }
-    else {
-      uint16_t hue = (uint16_t)((sec * 250.0) + (i * 3500)) % 65535;
+    } else {
+      uint16_t hue = (uint16_t)((sec * 250.0f) + (i * 3500)) % 65535;
       baseColor = strip.ColorHSV(hue, 240, 255);
     }
 
@@ -566,7 +672,7 @@ void updateTwinkle() {
 }
 
 // ===============================================================================
-// --- Environment & Forecast Ingestion ---
+// --- Memory-Safe Stream & Filtered Environment Ingestion ---
 // ===============================================================================
 void fetchEnvironmentData() {
   if (WiFi.status() != WL_CONNECTED) return;
@@ -575,26 +681,39 @@ void fetchEnvironmentData() {
   HTTPClient http;
   http.setTimeout(2500);
 
-  // 1. Current Weather Endpoint
+  // 1. Current Weather Endpoint: Supplies 'now', sunrise/sunset, and telemetry
   String currentWeatherUrl = "http://api.openweathermap.org/data/2.5/weather?q=" +
                              String(CITY_NAME) + "&units=metric&appid=" + String(OPENWEATHER_KEY);
 
   if (http.begin(client, currentWeatherUrl)) {
     if (http.GET() == HTTP_CODE_OK) {
-      StaticJsonDocument<768> doc;
-      if (!deserializeJson(doc, http.getStream())) {
-        sunriseEpoch = doc["sys"]["sunrise"];
-        sunsetEpoch  = doc["sys"]["sunset"];
+      StaticJsonDocument<192> weatherFilter;
+      weatherFilter["dt"] = true;
+      weatherFilter["sys"]["sunrise"] = true;
+      weatherFilter["sys"]["sunset"] = true;
+      weatherFilter["main"]["humidity"] = true;
+      weatherFilter["main"]["pressure"] = true;
+      weatherFilter["wind"]["speed"] = true;
+      weatherFilter["clouds"]["all"] = true;
 
-        unsigned long serverNow = doc["dt"];
-        if (serverNow > 1000000000) {
+      StaticJsonDocument<384> doc;
+      if (!deserializeJson(doc, http.getStream(), DeserializationOption::Filter(weatherFilter))) {
+        sunriseEpoch     = doc["sys"]["sunrise"] | sunriseEpoch;
+        sunsetEpoch      = doc["sys"]["sunset"]  | sunsetEpoch;
+        currentHumidity  = doc["main"]["humidity"] | currentHumidity;
+        currentPressure  = doc["main"]["pressure"] | currentPressure;
+        currentWindSpeed = doc["wind"]["speed"]    | currentWindSpeed;
+        currentClouds    = doc["clouds"]["all"]    | currentClouds;
+
+        unsigned long serverNow = doc["dt"] | 0UL;
+        if (serverNow > 1000000000UL) {
           if (time(nullptr) < 1000000000) {
             struct timeval tv = { (time_t)serverNow, 0 };
             settimeofday(&tv, nullptr);
             setenv("TZ", TZ_INFO, 1);
             tzset();
           }
-          lastKnownValidEpoch = serverNow;
+          lastKnownValidEpoch = (time_t)serverNow;
           lastSyncLocalMillis = millis();
           isTimeEverSynced    = true;
         }
@@ -603,28 +722,35 @@ void fetchEnvironmentData() {
     http.end();
   }
 
-  // 2. 5-Day / 3-Hour Forecast: Strict count limit (cnt=4)
+  // 2. 5-Day / 3-Hour Forecast: Strict cnt=4 + stream filter for 8-hour lookup
   String forecastUrl = "http://api.openweathermap.org/data/2.5/forecast?q=" +
                        String(CITY_NAME) + "&cnt=4&units=metric&appid=" + String(OPENWEATHER_KEY);
 
   if (http.begin(client, forecastUrl)) {
     if (http.GET() == HTTP_CODE_OK) {
-      StaticJsonDocument<2048> doc;
-      if (!deserializeJson(doc, http.getStream())) {
+      StaticJsonDocument<192> forecastFilter;
+      forecastFilter["list"][0]["dt"] = true;
+      forecastFilter["list"][0]["main"]["temp"] = true;
+      forecastFilter["list"][0]["weather"][0]["id"] = true;
+
+      StaticJsonDocument<1024> doc;
+      if (!deserializeJson(doc, http.getStream(), DeserializationOption::Filter(forecastFilter))) {
         time_t now = time(nullptr);
-        unsigned long targetForecastEpoch = (now > 1000000000 ? now : lastKnownValidEpoch) + (8 * 3600);
-        
+        unsigned long baseEpoch = (now > 1000000000) ? (unsigned long)now : (unsigned long)lastKnownValidEpoch;
+        unsigned long targetForecastEpoch = baseEpoch + (8UL * 3600UL);
+
         JsonArray list = doc["list"];
-        unsigned long bestDiff = 0xFFFFFFFF;
+        unsigned long bestDiff = 0xFFFFFFFFUL;
 
         for (JsonObject entry : list) {
-          unsigned long entryDt = entry["dt"];
+          unsigned long entryDt = entry["dt"] | 0UL;
+          if (entryDt == 0UL) continue;
           unsigned long diff = (entryDt > targetForecastEpoch) ? (entryDt - targetForecastEpoch) : (targetForecastEpoch - entryDt);
 
           if (diff < bestDiff) {
             bestDiff = diff;
-            forecast8HrWeatherId = entry["weather"][0]["id"];
-            forecast8HrTempC     = entry["main"]["temp"];
+            forecast8HrWeatherId = entry["weather"][0]["id"] | forecast8HrWeatherId;
+            forecast8HrTempC     = entry["main"]["temp"]        | forecast8HrTempC;
           }
         }
       }
@@ -638,10 +764,14 @@ void fetchEnvironmentData() {
 
   if (http.begin(client, aqiUrl)) {
     if (http.GET() == HTTP_CODE_OK) {
-      StaticJsonDocument<768> doc;
-      if (!deserializeJson(doc, http.getStream())) {
-        currentAQI  = doc["list"][0]["main"]["aqi"]; 
-        currentPM25 = doc["list"][0]["components"]["pm2_5"];
+      StaticJsonDocument<128> aqiFilter;
+      aqiFilter["list"][0]["main"]["aqi"] = true;
+      aqiFilter["list"][0]["components"]["pm2_5"] = true;
+
+      StaticJsonDocument<384> doc;
+      if (!deserializeJson(doc, http.getStream(), DeserializationOption::Filter(aqiFilter))) {
+        currentAQI  = doc["list"][0]["main"]["aqi"]          | currentAQI;
+        currentPM25 = doc["list"][0]["components"]["pm2_5"] | currentPM25;
       }
     }
     http.end();
